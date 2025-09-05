@@ -12,29 +12,29 @@ on:
 jobs:
   security:
     runs-on: ubuntu-latest
-    
+
     steps:
     - uses: actions/checkout@v4
-    
+
     - name: Install uv
       uses: astral-sh/setup-uv@v2
       with:
         version: "latest"
-      
+
     - name: Set up Python
       run: uv python install
-      
+
     - name: Install dependencies
       run: uv sync --dev
-      
+
     - name: Run bandit security scan
       run: uv run bandit -r dagster_clickhouse/ -f json -o bandit-report.json
       continue-on-error: true
-      
+
     - name: Run safety check for known vulnerabilities
       run: uv run safety check --json --output safety-report.json
       continue-on-error: true
-      
+
     - name: Upload security reports
       uses: actions/upload-artifact@v3
       if: always()
@@ -48,7 +48,7 @@ jobs:
   dependency-review:
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request'
-    
+
     steps:
     - name: Dependency Review
       uses: actions/dependency-review-action@v3

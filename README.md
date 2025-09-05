@@ -233,7 +233,7 @@ python -m pytest tests/
 The implementation follows Dagster's `EventLogStorage` interface. Key methods:
 
 - `store_event()` - Batched event storage
-- `get_records_for_run()` - Optimized time-range queries  
+- `get_records_for_run()` - Optimized time-range queries
 - `_flush_events()` - Bulk insert optimization
 - `_create_materialized_views()` - Real-time analytics
 
