@@ -37,8 +37,15 @@ def create_test_event(
 @pytest.fixture
 def clickhouse_storage():
     """Create a test ClickHouse storage instance with proper isolation."""
+    import os
+
+    # Use environment variable for CI, fallback to local default
+    clickhouse_url = os.environ.get(
+        "CLICKHOUSE_URL", "http://dagster:dagster@localhost:8123/test_dagster"
+    )
+
     storage = ClickHouseEventLogStorage(
-        clickhouse_url="http://dagster:dagster@localhost:8123/test_dagster",
+        clickhouse_url=clickhouse_url,
         batch_size=10,  # Small batch for testing
         flush_interval=1.0,  # Must be float
         should_autocreate_tables=True,
@@ -353,8 +360,14 @@ def test_watcher_cleanup(clickhouse_storage):
 
 if __name__ == "__main__":
     # Simple test runner for development
+    import os
+
+    clickhouse_url = os.environ.get(
+        "CLICKHOUSE_URL", "http://dagster:dagster@localhost:8123/test_dagster"
+    )
+
     storage = ClickHouseEventLogStorage(
-        clickhouse_url="http://dagster:dagster@localhost:8123/test_dagster",
+        clickhouse_url=clickhouse_url,
         batch_size=10,
         flush_interval=1.0,  # Must be float
         should_autocreate_tables=True,
