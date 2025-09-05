@@ -4,9 +4,9 @@ import logging
 import re
 import threading
 import time
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from datetime import datetime
-from typing import Any, Optional, Union
+from typing import Any, Dict, List, Optional, Union
 
 import dagster._check as check
 from dagster._config.config_schema import UserConfigSchema
@@ -26,6 +26,7 @@ from dagster._core.storage.asset_check_execution_record import AssetCheckExecuti
 from dagster._core.storage.event_log import EventLogStorage
 from dagster._core.storage.event_log.base import (
     AssetCheckSummaryRecord,
+    AssetEntry,
     AssetRecord,
     EventLogConnection,
     EventLogCursor,
@@ -38,7 +39,7 @@ from dagster._serdes import (
     deserialize_value,
     serialize_value,
 )
-from dagster._utils.concurrency import ConcurrencyClaimStatus, ConcurrencyKeyInfo
+from dagster._utils.concurrency import ConcurrencyClaimStatus, ConcurrencyKeyInfo, ConcurrencySlotStatus
 
 try:
     import clickhouse_connect
@@ -138,7 +139,7 @@ class ClickHouseEventLogStorage(EventLogStorage, ConfigurableClass):
         # Don't create a persistent client to avoid connection state issues
 
         # Event batching for optimal ClickHouse performance
-        self._event_buffer = []
+        self._event_buffer: List[EventLogEntry] = []
         self._buffer_lock = threading.Lock()
         self._last_flush = time.time()
         self._shutdown = False
@@ -161,7 +162,7 @@ class ClickHouseEventLogStorage(EventLogStorage, ConfigurableClass):
         self._flush_thread.start()
 
         # Event watcher for real-time streaming
-        self._event_watcher = None
+        self._event_watcher: Optional[Any] = None
 
         # Validate configuration
         self._validate_config()
@@ -169,7 +170,7 @@ class ClickHouseEventLogStorage(EventLogStorage, ConfigurableClass):
         if self.should_autocreate_tables:
             self._init_db_once()
 
-    def _create_clickhouse_client(self, clickhouse_url: str):
+    def _create_clickhouse_client(self, clickhouse_url: str) -> Any:
         """Create optimized ClickHouse client from URL.
 
         Based on performance testing, HTTP connections (port 8123) provide better
@@ -280,7 +281,7 @@ class ClickHouseEventLogStorage(EventLogStorage, ConfigurableClass):
             self._storage_id_counter += 1
             return self._storage_id_counter
 
-    def _get_client(self):
+    def _get_client(self) -> Any:
         """Get a fresh ClickHouse HTTP client connection.
 
         Creates a new client for each operation to avoid connection state issues.
@@ -300,7 +301,7 @@ class ClickHouseEventLogStorage(EventLogStorage, ConfigurableClass):
                 f"Failed to connect to ClickHouse at {self.clickhouse_url}: {str(e)}"
             )
 
-    def _execute_query(self, query: str, data=None, params: Optional[dict] = None):
+    def _execute_query(self, query: str, data: Any = None, params: Optional[Dict[str, Any]] = None) -> Any:
         """Execute a ClickHouse query with proper connection management."""
         client = self._get_client()
         try:
@@ -423,7 +424,7 @@ class ClickHouseEventLogStorage(EventLogStorage, ConfigurableClass):
         # Create materialized views for performance
         self._create_materialized_views()
 
-    def _create_materialized_views(self):
+    def _create_materialized_views(self) -> None:
         """Create materialized views for performance optimization."""
 
         # Latest asset materializations view
@@ -470,7 +471,7 @@ class ClickHouseEventLogStorage(EventLogStorage, ConfigurableClass):
             self._event_buffer.extend(events)
             self._flush_events()
 
-    def _flush_events(self):
+    def _flush_events(self) -> None:
         """Flush buffered events to ClickHouse with optimized batching and async inserts."""
         if not self._event_buffer:
             return
@@ -595,7 +596,7 @@ class ClickHouseEventLogStorage(EventLogStorage, ConfigurableClass):
                 f"Failed to flush events to ClickHouse: {e}"
             )
 
-    def _store_asset_events_batch(self, asset_events: list):
+    def _store_asset_events_batch(self, asset_events: List[Any]) -> None:
         """Store multiple asset events in batch for better performance."""
         if not asset_events:
             return
@@ -649,7 +650,7 @@ class ClickHouseEventLogStorage(EventLogStorage, ConfigurableClass):
                 ],
             )
 
-    def _store_asset_event(self, event: EventLogEntry, event_id: int):
+    def _store_asset_event(self, event: EventLogEntry, event_id: int) -> None:
         """Store single asset event - kept for compatibility."""
         self._store_asset_events_batch([(event, event_id)])
 
@@ -689,7 +690,7 @@ class ClickHouseEventLogStorage(EventLogStorage, ConfigurableClass):
                 storage_id = cursor_obj.storage_id()
                 if storage_id is not None:
                     query += " AND id > %(cursor_id)s"
-                    params["cursor_id"] = storage_id
+                    params["cursor_id"] = str(storage_id)
             except (AttributeError, ValueError):
                 # If cursor doesn't have storage_id or is invalid, ignore it
                 pass
@@ -746,12 +747,12 @@ class ClickHouseEventLogStorage(EventLogStorage, ConfigurableClass):
         """Schema migrations - ClickHouse handles this automatically."""
         pass
 
-    def reindex_events(self, print_fn=None, force: bool = False) -> None:
+    def reindex_events(self, print_fn: Optional[Any] = None, force: bool = False) -> None:
         """Reindex events - ClickHouse handles indexing automatically."""
         if print_fn:
             print_fn("ClickHouse handles indexing automatically")
 
-    def reindex_assets(self, print_fn=None, force: bool = False) -> None:
+    def reindex_assets(self, print_fn: Optional[Any] = None, force: bool = False) -> None:
         """Reindex assets - ClickHouse handles indexing automatically."""
         if print_fn:
             print_fn("ClickHouse handles asset indexing automatically")
@@ -796,7 +797,7 @@ class ClickHouseEventLogStorage(EventLogStorage, ConfigurableClass):
         if self._event_watcher:
             self._event_watcher.unwatch_run(run_id, handler)
 
-    def _gen_event_log_entry_from_cursor(self, cursor) -> EventLogEntry:
+    def _gen_event_log_entry_from_cursor(self, cursor: Any) -> EventLogEntry:
         """Generate event log entry from cursor - required by polling watcher."""
         client = self._get_client()
         result = client.query(
@@ -821,7 +822,7 @@ class ClickHouseEventLogStorage(EventLogStorage, ConfigurableClass):
         """ClickHouse is persistent storage."""
         return True
 
-    def _background_flush(self):
+    def _background_flush(self) -> None:
         """Background thread with proper shutdown handling."""
         logger.info("Background flush thread started")
 
@@ -944,13 +945,8 @@ class ClickHouseEventLogStorage(EventLogStorage, ConfigurableClass):
         params = {}
 
         # Apply filters
-        if event_records_filter.run_ids:
-            # Validate run IDs
-            validated_run_ids = [
-                self._validate_run_id(run_id) for run_id in event_records_filter.run_ids
-            ]
-            placeholders = ", ".join([f"'{run_id}'" for run_id in validated_run_ids])
-            query += f" AND run_id IN ({placeholders})"
+        # Note: EventRecordsFilter may not have run_ids attribute in all versions
+        # This is a simplified implementation that skips run_ids filtering
 
         if event_records_filter.event_type:
             query += " AND dagster_event_type = %(event_type)s"
@@ -962,15 +958,15 @@ class ClickHouseEventLogStorage(EventLogStorage, ConfigurableClass):
 
         if event_records_filter.after_timestamp:
             query += " AND timestamp > %(after_timestamp)s"
-            params["after_timestamp"] = datetime.fromtimestamp(
+            params["after_timestamp"] = str(datetime.fromtimestamp(
                 event_records_filter.after_timestamp
-            )
+            ))
 
         if event_records_filter.before_timestamp:
             query += " AND timestamp < %(before_timestamp)s"
-            params["before_timestamp"] = datetime.fromtimestamp(
+            params["before_timestamp"] = str(datetime.fromtimestamp(
                 event_records_filter.before_timestamp
-            )
+            ))
 
         # Order and limit
         order_direction = "ASC" if ascending else "DESC"
@@ -1014,7 +1010,7 @@ class ClickHouseEventLogStorage(EventLogStorage, ConfigurableClass):
             FROM asset_keys
             WHERE wipe_timestamp IS NULL
         """
-        params = {}
+        params: Dict[str, Any] = {}
 
         if asset_keys:
             asset_key_strs = [key.to_string() for key in asset_keys]
@@ -1031,12 +1027,17 @@ class ClickHouseEventLogStorage(EventLogStorage, ConfigurableClass):
                 # Create a basic AssetRecord
                 # Note: This is a simplified implementation
                 # In a full implementation, you'd need to fetch more details
+                # Create a basic AssetRecord with minimal required fields
+                # Note: This is a simplified implementation
+                # Create a basic AssetEntry with minimal required fields
+                asset_entry = AssetEntry(
+                    asset_key=asset_key,
+                    last_materialization_record=None,  # Would need to fetch from events
+                )
                 records.append(
                     AssetRecord(
-                        asset_entry=None,  # Would need to implement asset entry storage
-                        asset_key=asset_key,
-                        last_materialization_record=None,  # Would need to fetch from events
-                        last_run_id=row[3] if row[3] else None,
+                        asset_entry=asset_entry,
+                        storage_id=row[2] if row[2] else 0,  # Use storage_id from row
                     )
                 )
 
@@ -1071,19 +1072,21 @@ class ClickHouseEventLogStorage(EventLogStorage, ConfigurableClass):
         return [AssetKey.from_user_string(row[0]) for row in result.result_rows]
 
     def update_asset_cached_status_data(
-        self, asset_key: AssetKey, cache_values
+        self, asset_key: AssetKey, cache_values: Any
     ) -> None:
         pass
 
     def get_latest_materialization_events(
-        self, asset_keys
+        self, asset_keys: Iterable[AssetKey]
     ) -> Mapping[AssetKey, Optional[EventLogEntry]]:
         """Get latest materialization events for asset keys."""
-        if not asset_keys:
+        # Convert to list for processing
+        asset_keys_list = list(asset_keys)
+        if not asset_keys_list:
             return {}
 
         # Convert asset keys to strings for query
-        asset_key_strs = [key.to_string() for key in asset_keys]
+        asset_key_strs = [key.to_string() for key in asset_keys_list]
         placeholders = ", ".join([f"'{key}'" for key in asset_key_strs])
 
         query = f"""
@@ -1098,10 +1101,10 @@ class ClickHouseEventLogStorage(EventLogStorage, ConfigurableClass):
 
         try:
             result = self._execute_query(query)
-            materialization_map = {}
+            materialization_map: Dict[AssetKey, Optional[EventLogEntry]] = {}
 
             # Initialize all keys to None
-            for key in asset_keys:
+            for key in asset_keys_list:
                 materialization_map[key] = None
 
             # Fill in the results
@@ -1117,7 +1120,7 @@ class ClickHouseEventLogStorage(EventLogStorage, ConfigurableClass):
                 f"Failed to get latest materialization events: {e}", exc_info=True
             )
             # Return empty dict with None values
-            return dict.fromkeys(asset_keys)
+            return dict.fromkeys(asset_keys_list)
 
     def get_event_tags_for_asset(
         self,
@@ -1249,9 +1252,9 @@ class ClickHouseEventLogStorage(EventLogStorage, ConfigurableClass):
         return set()
 
     def get_concurrency_info(self, concurrency_key: str) -> ConcurrencyKeyInfo:
-        return ConcurrencyKeyInfo(concurrency_key, 0, 0, [])
+        return ConcurrencyKeyInfo(concurrency_key=concurrency_key, slot_count=0, claimed_slots=[], pending_steps=[])
 
-    def get_pool_limits(self):
+    def get_pool_limits(self) -> List[Any]:
         return []
 
     def claim_concurrency_slot(
@@ -1261,12 +1264,14 @@ class ClickHouseEventLogStorage(EventLogStorage, ConfigurableClass):
         step_key: str,
         priority: Optional[int] = None,
     ) -> ConcurrencyClaimStatus:
-        return ConcurrencyClaimStatus.CLAIMED
+        # Return a default status - this is a simplified implementation
+        return ConcurrencyClaimStatus(concurrency_key=concurrency_key, slot_status=ConcurrencySlotStatus.CLAIMED)
 
     def check_concurrency_claim(
         self, concurrency_key: str, run_id: str, step_key: str
     ) -> ConcurrencyClaimStatus:
-        return ConcurrencyClaimStatus.CLAIMED
+        # Return a default status - this is a simplified implementation
+        return ConcurrencyClaimStatus(concurrency_key=concurrency_key, slot_status=ConcurrencySlotStatus.CLAIMED)
 
     def get_concurrency_run_ids(self) -> set[str]:
         return set()
@@ -1283,7 +1288,7 @@ class ClickHouseEventLogStorage(EventLogStorage, ConfigurableClass):
         check_key: AssetCheckKey,
         limit: int,
         cursor: Optional[int] = None,
-        status=None,
+        status: Optional[Any] = None,
     ) -> Sequence[AssetCheckExecutionRecord]:
         return []
 
@@ -1294,7 +1299,7 @@ class ClickHouseEventLogStorage(EventLogStorage, ConfigurableClass):
 
     def fetch_materializations(
         self,
-        records_filter,
+        records_filter: Any,
         limit: int,
         cursor: Optional[str] = None,
         ascending: bool = False,
@@ -1303,7 +1308,7 @@ class ClickHouseEventLogStorage(EventLogStorage, ConfigurableClass):
 
     def fetch_failed_materializations(
         self,
-        records_filter,
+        records_filter: Any,
         limit: int,
         cursor: Optional[str] = None,
         ascending: bool = False,
@@ -1312,7 +1317,7 @@ class ClickHouseEventLogStorage(EventLogStorage, ConfigurableClass):
 
     def fetch_observations(
         self,
-        records_filter,
+        records_filter: Any,
         limit: int,
         cursor: Optional[str] = None,
         ascending: bool = False,
@@ -1321,7 +1326,7 @@ class ClickHouseEventLogStorage(EventLogStorage, ConfigurableClass):
 
     def fetch_run_status_changes(
         self,
-        records_filter,
+        records_filter: Any,
         limit: int,
         cursor: Optional[str] = None,
         ascending: bool = False,
@@ -1336,6 +1341,6 @@ class ClickHouseEventLogStorage(EventLogStorage, ConfigurableClass):
         return None
 
     def get_updated_data_version_partitions(
-        self, asset_key: AssetKey, partitions, since_storage_id: int
+        self, asset_key: AssetKey, partitions: Any, since_storage_id: int
     ) -> set[str]:
         return set()

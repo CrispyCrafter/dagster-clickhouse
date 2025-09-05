@@ -30,9 +30,6 @@ jobs:
     - name: Run ruff format check
       run: uv run ruff format --check .
       
-    - name: Run black check
-      run: uv run black --check --diff .
-      
     - name: Run mypy
       run: uv run mypy dagster_clickhouse/
       continue-on-error: true  # Don't fail CI on mypy errors initially
