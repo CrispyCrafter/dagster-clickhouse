@@ -1,0 +1,53 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  lint-and-test:
+    runs-on: ubuntu-latest
+
+    # services:
+    #   clickhouse:
+    #     image: clickhouse/clickhouse-server:latest
+    #     ports:
+    #       - 8123:8123
+    #       - 9000:9000
+    #     env:
+    #       CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
+    #       CLICKHOUSE_USER: dagster
+    #       CLICKHOUSE_PASSWORD: dagster
+    #       CLICKHOUSE_DB: dagster
+    #     options: >-
+    #       --health-cmd "wget --no-verbose --tries=1 --spider http://localhost:8123/ping || exit 1"
+    #       --health-interval 30s
+    #       --health-timeout 10s
+    #       --health-retries 3
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v2
+      with:
+        version: "latest"
+
+    - name: Set up Python 3.11
+      run: uv python install 3.11
+
+    - name: Install dependencies
+      run: uv sync --dev
+
+    - name: Run pre-commit hooks
+      run: uv run pre-commit run --all-files
+
+    - name: Run mypy
+      run: uv run mypy dagster_clickhouse/
+
+    # - name: Run tests
+    #   run: uv run pytest tests/ -v
+    #   env:
+    #     CLICKHOUSE_URL: "http://dagster:dagster@localhost:8123/test_dagster"

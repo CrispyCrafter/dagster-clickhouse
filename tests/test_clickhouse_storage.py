@@ -6,20 +6,97 @@ from datetime import datetime
 
 import pytest
 from dagster import DagsterEventType
+from dagster._core.events import DagsterEvent
 from dagster._core.events.log import EventLogEntry
 
 from dagster_clickhouse.event_log.event_log import ClickHouseEventLogStorage
 
 
+def create_test_event(
+    run_id: str, message: str, event_type: DagsterEventType, step_key: str = None
+) -> EventLogEntry:
+    """Helper function to create test EventLogEntry objects."""
+    dagster_event = DagsterEvent(
+        event_type_value=event_type.value,
+        job_name="test_job",
+        step_key=step_key,
+    )
+
+    return EventLogEntry(
+        error_info=None,
+        level="INFO",
+        user_message=message,
+        run_id=run_id,
+        timestamp=datetime.now().timestamp(),
+        step_key=step_key,
+        job_name="test_job",
+        dagster_event=dagster_event,
+    )
+
+
 @pytest.fixture
 def clickhouse_storage():
-    """Create a test ClickHouse storage instance."""
-    return ClickHouseEventLogStorage(
-        clickhouse_url="http://dagster:dagster@localhost:8123/test_dagster",
+    """Create a test ClickHouse storage instance with proper isolation."""
+    import os
+
+    # Use environment variable for CI, fallback to local default
+    clickhouse_url = os.environ.get(
+        "CLICKHOUSE_URL", "http://dagster:dagster@localhost:8123/test_dagster"
+    )
+
+    storage = ClickHouseEventLogStorage(
+        clickhouse_url=clickhouse_url,
         batch_size=10,  # Small batch for testing
         flush_interval=1.0,  # Must be float
         should_autocreate_tables=True,
     )
+
+    # Clean up any existing test data before test
+    storage.wipe()
+
+    # Ensure any pending background operations are complete
+    import time
+
+    time.sleep(0.1)  # Small delay to ensure cleanup is complete
+
+    yield storage
+
+    # Thorough cleanup after test
+    try:
+        # Force flush any remaining events
+        with storage._buffer_lock:
+            if storage._event_buffer:
+                storage._flush_events()
+
+        # Stop any background threads
+        storage._shutdown = True
+        if hasattr(storage, "_shutdown_event"):
+            storage._shutdown_event.set()
+
+        # Wait for background thread to stop
+        if hasattr(storage, "_flush_thread") and storage._flush_thread.is_alive():
+            storage._flush_thread.join(timeout=1.0)
+
+        # Clean up event watcher
+        if storage._event_watcher:
+            storage._event_watcher.close()
+            storage._event_watcher = None
+
+        # Wipe all data
+        storage.wipe()
+
+        # Small delay to ensure cleanup is complete
+        time.sleep(0.1)
+
+    except Exception as e:
+        # Log cleanup errors but don't fail the test
+        print(f"Cleanup warning: {e}")
+    finally:
+        # Always try to dispose
+        try:
+            storage.dispose()
+        except Exception:
+            pass
 
 
 def test_clickhouse_storage_creation(clickhouse_storage):
@@ -32,15 +109,7 @@ def test_clickhouse_storage_creation(clickhouse_storage):
 def test_store_and_retrieve_event(clickhouse_storage):
     """Test storing and retrieving a simple event."""
     # Create a test event
-    event = EventLogEntry(
-        error_info=None,
-        level="INFO",
-        user_message="Test event",
-        run_id="test_run_123",
-        timestamp=datetime.now().timestamp(),
-        dagster_event_type=DagsterEventType.RUN_START,
-        dagster_event=None,
-    )
+    event = create_test_event("test_run_123", "Test event", DagsterEventType.RUN_START)
 
     # Store the event
     clickhouse_storage.store_event(event)
@@ -62,14 +131,8 @@ def test_batch_storage(clickhouse_storage):
     """Test batch storage of multiple events."""
     events = []
     for i in range(5):
-        event = EventLogEntry(
-            error_info=None,
-            level="INFO",
-            user_message=f"Test event {i}",
-            run_id="batch_test_run",
-            timestamp=datetime.now().timestamp(),
-            dagster_event_type=DagsterEventType.RUN_START,
-            dagster_event=None,
+        event = create_test_event(
+            "batch_test_run", f"Test event {i}", DagsterEventType.RUN_START
         )
         events.append(event)
 
@@ -86,23 +149,9 @@ def test_event_filtering(clickhouse_storage):
     """Test filtering events by type."""
     # Store events of different types
     events = [
-        EventLogEntry(
-            error_info=None,
-            level="INFO",
-            user_message="Start event",
-            run_id="filter_test_run",
-            timestamp=datetime.now().timestamp(),
-            dagster_event_type=DagsterEventType.RUN_START,
-            dagster_event=None,
-        ),
-        EventLogEntry(
-            error_info=None,
-            level="INFO",
-            user_message="Success event",
-            run_id="filter_test_run",
-            timestamp=datetime.now().timestamp(),
-            dagster_event_type=DagsterEventType.RUN_SUCCESS,
-            dagster_event=None,
+        create_test_event("filter_test_run", "Start event", DagsterEventType.RUN_START),
+        create_test_event(
+            "filter_test_run", "Success event", DagsterEventType.RUN_SUCCESS
         ),
     ]
 
@@ -135,8 +184,13 @@ def test_asset_keys(clickhouse_storage):
 
 def test_dynamic_partitions(clickhouse_storage):
     """Test dynamic partition management."""
+    import time
+
     partition_def = "test_partition_def"
     partition_keys = ["2023-01-01", "2023-01-02", "2023-01-03"]
+
+    # Ensure clean state
+    time.sleep(0.1)
 
     # Add partitions
     clickhouse_storage.add_dynamic_partitions(partition_def, partition_keys)
@@ -151,21 +205,17 @@ def test_dynamic_partitions(clickhouse_storage):
 
     # Delete a partition
     clickhouse_storage.delete_dynamic_partition(partition_def, "2023-01-01")
+
+    # Small delay to ensure deletion is processed
+    time.sleep(0.1)
+
     assert not clickhouse_storage.has_dynamic_partition(partition_def, "2023-01-01")
 
 
 def test_wipe_storage(clickhouse_storage):
     """Test wiping all storage."""
     # Add some test data
-    event = EventLogEntry(
-        error_info=None,
-        level="INFO",
-        user_message="Test event",
-        run_id="wipe_test_run",
-        timestamp=datetime.now().timestamp(),
-        dagster_event_type=DagsterEventType.RUN_START,
-        dagster_event=None,
-    )
+    event = create_test_event("wipe_test_run", "Test event", DagsterEventType.RUN_START)
 
     clickhouse_storage.store_event(event)
 
@@ -190,7 +240,7 @@ def test_event_watching(clickhouse_storage):
     received_events = []
     watch_complete = threading.Event()
 
-    def event_handler(event):
+    def event_handler(event, cursor):
         """Handler to collect received events."""
         received_events.append(event)
         if len(received_events) >= 3:  # Wait for 3 events
@@ -202,14 +252,8 @@ def test_event_watching(clickhouse_storage):
     clickhouse_storage.watch(run_id, None, event_handler)
 
     # Store initial event and flush to establish baseline
-    initial_event = EventLogEntry(
-        error_info=None,
-        level="INFO",
-        user_message="Initial event",
-        run_id=run_id,
-        timestamp=datetime.now().timestamp(),
-        dagster_event_type=DagsterEventType.RUN_START,
-        dagster_event=None,
+    initial_event = create_test_event(
+        run_id, "Initial event", DagsterEventType.RUN_START
     )
     clickhouse_storage.store_event(initial_event)
     with clickhouse_storage._buffer_lock:
@@ -220,14 +264,8 @@ def test_event_watching(clickhouse_storage):
 
     # Add more events that should be picked up by the watcher
     for i in range(2):
-        event = EventLogEntry(
-            error_info=None,
-            level="INFO",
-            user_message=f"Watched event {i + 1}",
-            run_id=run_id,
-            timestamp=datetime.now().timestamp(),
-            dagster_event_type=DagsterEventType.STEP_START,
-            dagster_event=None,
+        event = create_test_event(
+            run_id, f"Watched event {i + 1}", DagsterEventType.STEP_START
         )
         clickhouse_storage.store_event(event)
         with clickhouse_storage._buffer_lock:
@@ -241,15 +279,15 @@ def test_event_watching(clickhouse_storage):
     clickhouse_storage.end_watch(run_id, event_handler)
 
     # Verify we received the events
-    assert len(received_events) >= 1, (
-        f"Expected at least 1 event, got {len(received_events)}"
-    )
+    assert (
+        len(received_events) >= 1
+    ), f"Expected at least 1 event, got {len(received_events)}"
 
     # Verify the events are correct
     run_ids = [event.run_id for event in received_events]
-    assert all(rid == run_id for rid in run_ids), (
-        "All events should be for the correct run"
-    )
+    assert all(
+        rid == run_id for rid in run_ids
+    ), "All events should be for the correct run"
 
     print(f"✓ Event watching test passed - received {len(received_events)} events")
 
@@ -259,10 +297,10 @@ def test_multiple_watchers(clickhouse_storage):
     received_events_1 = []
     received_events_2 = []
 
-    def handler_1(event):
+    def handler_1(event, cursor):
         received_events_1.append(event)
 
-    def handler_2(event):
+    def handler_2(event, cursor):
         received_events_2.append(event)
 
     run_id = "multi_watch_test_run"
@@ -272,15 +310,7 @@ def test_multiple_watchers(clickhouse_storage):
     clickhouse_storage.watch(run_id, None, handler_2)
 
     # Store an event
-    event = EventLogEntry(
-        error_info=None,
-        level="INFO",
-        user_message="Multi-watch event",
-        run_id=run_id,
-        timestamp=datetime.now().timestamp(),
-        dagster_event_type=DagsterEventType.RUN_START,
-        dagster_event=None,
-    )
+    event = create_test_event(run_id, "Multi-watch event", DagsterEventType.RUN_START)
     clickhouse_storage.store_event(event)
     with clickhouse_storage._buffer_lock:
         clickhouse_storage._flush_events()
@@ -303,7 +333,7 @@ def test_watcher_cleanup(clickhouse_storage):
     """Test that watchers are properly cleaned up."""
     received_events = []
 
-    def event_handler(event):
+    def event_handler(event, cursor):
         received_events.append(event)
 
     run_id = "cleanup_test_run"
@@ -330,8 +360,14 @@ def test_watcher_cleanup(clickhouse_storage):
 
 if __name__ == "__main__":
     # Simple test runner for development
+    import os
+
+    clickhouse_url = os.environ.get(
+        "CLICKHOUSE_URL", "http://dagster:dagster@localhost:8123/test_dagster"
+    )
+
     storage = ClickHouseEventLogStorage(
-        clickhouse_url="http://dagster:dagster@localhost:8123/test_dagster",
+        clickhouse_url=clickhouse_url,
         batch_size=10,
         flush_interval=1.0,  # Must be float
         should_autocreate_tables=True,
@@ -346,6 +382,15 @@ if __name__ == "__main__":
 
     test_batch_storage(storage)
     print("✓ Batch storage test passed")
+
+    test_asset_keys(storage)
+    print("✓ Asset keys test passed")
+
+    test_dynamic_partitions(storage)
+    print("✓ Dynamic partitions test passed")
+
+    test_wipe_storage(storage)
+    print("✓ Wipe storage test passed")
 
     print("\nTesting event watching functionality...")
     test_event_watching(storage)

@@ -107,14 +107,14 @@ git checkout -b feature/your-feature-name
 ```python
 def store_event(self, event: EventLogEntry) -> None:
     """Store an event with optimized batching for balanced latency/throughput.
-    
+
     Args:
         event: The event log entry to store
-        
+
     Raises:
         DagsterInvariantViolationError: If ClickHouse storage fails
         ValueError: If event is invalid
-        
+
     Example:
         >>> storage = ClickHouseEventLogStorage(url="http://localhost:8123/dagster")
         >>> event = EventLogEntry(...)

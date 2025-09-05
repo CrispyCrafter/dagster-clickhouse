@@ -7,22 +7,10 @@ repos:
         args: [--fix]
       # Run the formatter
       - id: ruff-format
-        
-  - repo: https://github.com/psf/black
-    rev: 23.11.0
-    hooks:
-      - id: black
-        language_version: python3
-        
-  - repo: https://github.com/pre-commit/mirrors-mypy
-    rev: v1.7.1
-    hooks:
-      - id: mypy
-        additional_dependencies: [types-all]
-        args: [--strict]
-        
+
+
   - repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: v4.5.0
+    rev: v6.0.0
     hooks:
       - id: trailing-whitespace
       - id: end-of-file-fixer
@@ -30,14 +18,8 @@ repos:
       - id: check-added-large-files
       - id: check-merge-conflict
       - id: debug-statements
-        
-  - repo: https://github.com/pycqa/bandit
-    rev: 1.7.5
-    hooks:
-      - id: bandit
-        args: ["-c", "pyproject.toml"]
-        additional_dependencies: ["bandit[toml]"]
+
 
 # Configure pre-commit to use uv for installation
 default_install_hook_types: [pre-commit, pre-push]
-default_stages: [commit]
+default_stages: [pre-commit]

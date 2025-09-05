@@ -6,12 +6,12 @@ on:
       - 'v*'  # Trigger on version tags like v1.0.0
 
 jobs:
-  test:
+  test-release:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python-version: ["3.8", "3.9", "3.10", "3.11", "3.12"]
-        
+        python-version: ["3.11", "3.12", "3.13"]
+
     services:
       clickhouse:
         image: clickhouse/clickhouse-server:latest
@@ -29,61 +29,61 @@ jobs:
           --health-timeout 5s
           --health-retries 5
           --health-start-period 30s
-        
+
     steps:
     - uses: actions/checkout@v4
-    
+
     - name: Install uv
       uses: astral-sh/setup-uv@v2
       with:
         version: "latest"
-        
+
     - name: Set up Python ${{ matrix.python-version }}
       run: uv python install ${{ matrix.python-version }}
-      
+
     - name: Install dependencies
       run: uv sync --all-extras --dev
-      
+
     - name: Wait for ClickHouse to be ready
       run: |
         timeout 60 bash -c 'until curl -s http://localhost:8123/ping; do sleep 2; done'
         echo "ClickHouse is ready"
-        
+
     - name: Run tests
       run: uv run pytest tests/ -v
       env:
-        CLICKHOUSE_URL: "http://dagster:dagster@localhost:8123/dagster"
+        CLICKHOUSE_URL: "http://dagster:dagster@localhost:8123/test_dagster"
 
   build-and-publish:
-    needs: test
+    needs: test-release
     runs-on: ubuntu-latest
-    
+
     steps:
     - uses: actions/checkout@v4
-    
+
     - name: Install uv
       uses: astral-sh/setup-uv@v2
       with:
         version: "latest"
-      
+
     - name: Set up Python
       run: uv python install
-      
+
     - name: Install dependencies
       run: uv sync --dev
-      
+
     - name: Build package
       run: uv build
-      
+
     - name: Check package
       run: uv run twine check dist/*
-      
+
     - name: Publish to PyPI
       env:
         TWINE_USERNAME: __token__
         TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
       run: uv run twine upload dist/*
-      
+
     - name: Create GitHub Release
       uses: softprops/action-gh-release@v1
       with:
