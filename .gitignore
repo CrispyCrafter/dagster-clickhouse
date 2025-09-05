@@ -38,3 +38,4 @@ dagster_home/
 
 # Type checking
 .mypy_cache/
+PRODUCTIONIZATION_PLAN.md
