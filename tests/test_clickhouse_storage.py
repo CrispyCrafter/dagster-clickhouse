@@ -34,7 +34,7 @@ def create_test_event(run_id: str, message: str, event_type: DagsterEventType, s
 
 @pytest.fixture
 def clickhouse_storage():
-    """Create a test ClickHouse storage instance."""
+    """Create a test ClickHouse storage instance with proper isolation."""
     storage = ClickHouseEventLogStorage(
         clickhouse_url="http://dagster:dagster@localhost:8123/test_dagster",
         batch_size=10,  # Small batch for testing
@@ -45,14 +45,48 @@ def clickhouse_storage():
     # Clean up any existing test data before test
     storage.wipe()
     
+    # Ensure any pending background operations are complete
+    import time
+    time.sleep(0.1)  # Small delay to ensure cleanup is complete
+    
     yield storage
     
-    # Clean up after test - but don't dispose during active tests
+    # Thorough cleanup after test
     try:
+        # Force flush any remaining events
+        with storage._buffer_lock:
+            if storage._event_buffer:
+                storage._flush_events()
+        
+        # Stop any background threads
+        storage._shutdown = True
+        if hasattr(storage, '_shutdown_event'):
+            storage._shutdown_event.set()
+            
+        # Wait for background thread to stop
+        if hasattr(storage, '_flush_thread') and storage._flush_thread.is_alive():
+            storage._flush_thread.join(timeout=1.0)
+            
+        # Clean up event watcher
+        if storage._event_watcher:
+            storage._event_watcher.close()
+            storage._event_watcher = None
+            
+        # Wipe all data
         storage.wipe()
-        storage.dispose()
-    except Exception:
-        pass  # Ignore cleanup errors
+        
+        # Small delay to ensure cleanup is complete
+        time.sleep(0.1)
+        
+    except Exception as e:
+        # Log cleanup errors but don't fail the test
+        print(f"Cleanup warning: {e}")
+    finally:
+        # Always try to dispose
+        try:
+            storage.dispose()
+        except Exception:
+            pass
 
 
 def test_clickhouse_storage_creation(clickhouse_storage):
@@ -136,8 +170,13 @@ def test_asset_keys(clickhouse_storage):
 
 def test_dynamic_partitions(clickhouse_storage):
     """Test dynamic partition management."""
+    import time
+    
     partition_def = "test_partition_def"
     partition_keys = ["2023-01-01", "2023-01-02", "2023-01-03"]
+
+    # Ensure clean state
+    time.sleep(0.1)
 
     # Add partitions
     clickhouse_storage.add_dynamic_partitions(partition_def, partition_keys)
@@ -152,6 +191,10 @@ def test_dynamic_partitions(clickhouse_storage):
 
     # Delete a partition
     clickhouse_storage.delete_dynamic_partition(partition_def, "2023-01-01")
+    
+    # Small delay to ensure deletion is processed
+    time.sleep(0.1)
+    
     assert not clickhouse_storage.has_dynamic_partition(partition_def, "2023-01-01")
 
 
