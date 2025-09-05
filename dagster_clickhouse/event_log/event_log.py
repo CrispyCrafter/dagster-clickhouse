@@ -325,7 +325,7 @@ class ClickHouseEventLogStorage(EventLogStorage, ConfigurableClass):
 
         with self._init_lock:
             if self._tables_initialized:  # Double-check pattern
-                return
+                return  # type: ignore[unreachable]
 
             self._init_db_with_retry()
             self._tables_initialized = True
@@ -489,7 +489,7 @@ class ClickHouseEventLogStorage(EventLogStorage, ConfigurableClass):
                 if isinstance(event.timestamp, (int, float)):
                     timestamp = datetime.fromtimestamp(event.timestamp)
                 else:
-                    timestamp = event.timestamp
+                    timestamp = event.timestamp  # type: ignore[unreachable]
 
                 # Pre-initialize with defaults for speed
                 run_id = event.run_id or ""
