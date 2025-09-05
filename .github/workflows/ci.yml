@@ -7,7 +7,7 @@ on:
     branches: [ main, master ]
 
 jobs:
-  test:
+  lint-and-test:
     runs-on: ubuntu-latest
 
     services:

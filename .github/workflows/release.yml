@@ -6,11 +6,11 @@ on:
       - 'v*'  # Trigger on version tags like v1.0.0
 
 jobs:
-  test:
+  test-release:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python-version: ["3.8", "3.9", "3.10", "3.11", "3.12"]
+        python-version: ["3.11", "3.12", "3.13"]
 
     services:
       clickhouse:
@@ -52,10 +52,10 @@ jobs:
     - name: Run tests
       run: uv run pytest tests/ -v
       env:
-        CLICKHOUSE_URL: "http://dagster:dagster@localhost:8123/dagster"
+        CLICKHOUSE_URL: "http://dagster:dagster@localhost:8123/test_dagster"
 
   build-and-publish:
-    needs: test
+    needs: test-release
     runs-on: ubuntu-latest
 
     steps:
