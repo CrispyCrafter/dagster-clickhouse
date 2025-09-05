@@ -716,10 +716,18 @@ class ClickHouseEventLogStorage(EventLogStorage, ConfigurableClass):
         has_more = len(records) == limit if limit else False
 
         # The cursor should be an EventLogCursor, not just the storage_id
+        # Ensure cursor is never None to satisfy GraphQL schema requirements
         if records:
             next_cursor = str(EventLogCursor.from_storage_id(records[-1].storage_id))
         else:
-            next_cursor = cursor  # Return the input cursor if no new records
+            # Handle the case when there are no records
+            if cursor:
+                # Return the input cursor if no new records
+                next_cursor = cursor
+            else:
+                # Create a default cursor when no input cursor and no records
+                # Use -1 as storage_id to indicate no records (following SQL implementation)
+                next_cursor = str(EventLogCursor.from_storage_id(-1))
 
         return EventLogConnection(
             records=records, cursor=next_cursor, has_more=has_more
