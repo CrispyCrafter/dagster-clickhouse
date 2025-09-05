@@ -49,70 +49,13 @@ event_log_storage:
   module: dagster_clickhouse.event_log
   class: ClickHouseEventLogStorage
   config:
-    # HTTP provides significantly better performance than TCP
-    clickhouse_url: "http://dagster:dagster@localhost:8123/dagster"
-    batch_size: 100           # Optimized for frequent small messages (10-100 events)
-    flush_interval: 1.0       # Responsive flushing for low latency
-    use_async_inserts: true   # CRITICAL: 17x single-event performance boost
-    connection_pool_size: 100 # High concurrency for small batch processing
-    insert_timeout: 30.0      # Handles large batches reliably
-    should_autocreate_tables: true
+    clickhouse_url: "clickhouse://dagster:dagster@localhost:8123/dagster"  # HTTP for best performance
+    batch_size: 100           # Small batches for balanced latency/throughput
+    flush_interval: 1       # Quick flushing (100ms) for responsive UI
+    use_async_inserts: true   # CRITICAL: 17x performance boost
+    connection_pool_size: 100   # Optimal concurrency
+    insert_timeout: 10.0      # Handles large batches
 ```
-
-### High-Throughput Configuration
-
-```yaml
-# For maximum events/second (batch processing)
-event_log_storage:
-  module: dagster_clickhouse.event_log
-  class: ClickHouseEventLogStorage
-  config:
-    clickhouse_url: "http://dagster:dagster@localhost:8123/dagster"
-    batch_size: 50000         # Large batches for maximum throughput
-    flush_interval: 0.5       # Optimal balance tested
-    use_async_inserts: true   # Essential for performance
-    connection_pool_size: 8   # Higher concurrency
-    should_autocreate_tables: true
-```
-
-### Low-Latency Configuration
-
-```yaml
-# For minimum event delay (streaming workloads)
-event_log_storage:
-  module: dagster_clickhouse.event_log
-  class: ClickHouseEventLogStorage
-  config:
-    clickhouse_url: "http://dagster:dagster@localhost:8123/dagster"
-    batch_size: 50            # Small batches for balanced latency/throughput
-    flush_interval: 0.1       # Very frequent flushes (100ms)
-    use_async_inserts: true   # Critical for single events
-    connection_pool_size: 50  # Moderate concurrency for small batches
-    should_autocreate_tables: true
-```
-
-### Real-Time Streaming
-
-ClickHouse event log storage now includes **real-time event streaming** that matches PostgreSQL's behavior:
-
-- **Adaptive polling**: Starts at 250ms, backs off to 16s when idle
-- **Per-run threads**: Efficient resource usage with one thread per watched run
-- **Proper cursor management**: Ensures no events are missed or duplicated
-- **Automatic cleanup**: Threads terminate when no longer needed
-
-```yaml
-event_log_storage:
-  module: dagster_clickhouse.event_log
-  class: ClickHouseEventLogStorage
-  config:
-    clickhouse_url: "clickhouse://dagster:dagster@localhost:9000/dagster"
-    batch_size: 1000          # Standard batch size
-    flush_interval: 5         # Flush every 5 seconds
-    should_autocreate_tables: true
-```
-
-**No additional configuration needed** - real-time streaming works out of the box!
-
 ## Docker Setup
 
 The package is automatically configured in the development stack:
