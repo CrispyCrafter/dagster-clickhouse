@@ -400,7 +400,7 @@ class ClickHouseEventLogStorage(EventLogStorage, ConfigurableClass):
                 last_materialization_storage_id UInt64,
                 last_run_id String,
                 asset_details String,
-                wipe_timestamp DateTime64(3),
+                wipe_timestamp Nullable(DateTime64(3)),
                 created_timestamp DateTime64(3) DEFAULT now()
             ) ENGINE = ReplacingMergeTree(last_materialization_timestamp)
             ORDER BY asset_key
@@ -438,6 +438,9 @@ class ClickHouseEventLogStorage(EventLogStorage, ConfigurableClass):
         # Create materialized views for performance
         self._create_materialized_views()
 
+        # Migrate existing tables if needed
+        self._migrate_existing_tables()
+
     def _create_materialized_views(self) -> None:
         """Create materialized views for performance optimization."""
 
@@ -462,6 +465,62 @@ class ClickHouseEventLogStorage(EventLogStorage, ConfigurableClass):
             )
         except Exception:
             # View might already exist, ignore
+            pass
+
+    def _migrate_existing_tables(self) -> None:
+        """Migrate existing tables to handle schema changes."""
+        try:
+            # Check if wipe_timestamp column is nullable
+            result = self._execute_query(
+                """
+                SELECT type
+                FROM system.columns
+                WHERE database = currentDatabase()
+                AND table = 'asset_keys'
+                AND name = 'wipe_timestamp'
+                """
+            )
+
+            if result.result_rows:
+                column_type = result.result_rows[0][0]
+                # If the column is not nullable, we need to migrate
+                if "Nullable" not in column_type:
+                    logger.info(
+                        "Migrating asset_keys table to make wipe_timestamp nullable"
+                    )
+                    # ClickHouse doesn't support ALTER COLUMN to change nullability directly
+                    # We need to add a new column and migrate data
+                    try:
+                        # Add new nullable column
+                        self._execute_query(
+                            "ALTER TABLE asset_keys ADD COLUMN wipe_timestamp_new Nullable(DateTime64(3))"
+                        )
+
+                        # Copy data from old column (NULL values will be preserved)
+                        self._execute_query(
+                            "ALTER TABLE asset_keys UPDATE wipe_timestamp_new = wipe_timestamp WHERE 1=1"
+                        )
+
+                        # Drop old column and rename new one
+                        self._execute_query(
+                            "ALTER TABLE asset_keys DROP COLUMN wipe_timestamp"
+                        )
+                        self._execute_query(
+                            "ALTER TABLE asset_keys RENAME COLUMN wipe_timestamp_new TO wipe_timestamp"
+                        )
+
+                        logger.info(
+                            "Successfully migrated wipe_timestamp column to nullable"
+                        )
+                    except Exception as e:
+                        logger.warning(f"Failed to migrate wipe_timestamp column: {e}")
+                        # If migration fails, the table creation with IF NOT EXISTS will handle it
+                        pass
+        except Exception as e:
+            logger.debug(
+                f"Migration check failed (this is normal for new installations): {e}"
+            )
+            # This is expected for new installations where the table doesn't exist yet
             pass
 
     def store_event(self, event: EventLogEntry) -> None:
@@ -501,11 +560,20 @@ class ClickHouseEventLogStorage(EventLogStorage, ConfigurableClass):
             for event in self._event_buffer:
                 storage_id = self._get_next_storage_id()
 
-                # Fast timestamp conversion
-                if isinstance(event.timestamp, int | float):
+                # Fast timestamp conversion with validation
+                if isinstance(event.timestamp, (int, float)):  # noqa: UP038
                     timestamp = datetime.fromtimestamp(event.timestamp)
+                elif isinstance(event.timestamp, datetime):  # type: ignore[unreachable]
+                    timestamp = event.timestamp
+                elif event.timestamp is None:
+                    # Handle None timestamp by using current time
+                    timestamp = datetime.now()
                 else:
-                    timestamp = event.timestamp  # type: ignore[unreachable]
+                    # Fallback for other types - try to convert or use current time
+                    try:
+                        timestamp = datetime.fromisoformat(str(event.timestamp))
+                    except (ValueError, TypeError):
+                        timestamp = datetime.now()
 
                 # Pre-initialize with defaults for speed
                 run_id = event.run_id or ""
@@ -626,11 +694,20 @@ class ClickHouseEventLogStorage(EventLogStorage, ConfigurableClass):
 
             asset_key = event.dagster_event.asset_key.to_string()
 
-            # Fast timestamp conversion
-            if isinstance(event.timestamp, int | float):
+            # Fast timestamp conversion with validation
+            if isinstance(event.timestamp, (int, float)):  # noqa: UP038
                 timestamp = datetime.fromtimestamp(event.timestamp)
-            else:
+            elif isinstance(event.timestamp, datetime):
                 timestamp = event.timestamp
+            elif event.timestamp is None:
+                # Handle None timestamp by using current time
+                timestamp = datetime.now()
+            else:
+                # Fallback for other types - try to convert or use current time
+                try:
+                    timestamp = datetime.fromisoformat(str(event.timestamp))
+                except (ValueError, TypeError):
+                    timestamp = datetime.now()
 
             # Skip expensive serialization for performance
             batch_data.append(
@@ -706,7 +783,7 @@ class ClickHouseEventLogStorage(EventLogStorage, ConfigurableClass):
                 storage_id = cursor_obj.storage_id()
                 if storage_id is not None:
                     query += " AND id > %(cursor_id)s"
-                    params["cursor_id"] = storage_id
+                    params["cursor_id"] = str(storage_id)
             except (AttributeError, ValueError):
                 # If cursor doesn't have storage_id or is invalid, ignore it
                 pass
