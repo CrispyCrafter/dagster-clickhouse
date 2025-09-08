@@ -706,7 +706,7 @@ class ClickHouseEventLogStorage(EventLogStorage, ConfigurableClass):
                 storage_id = cursor_obj.storage_id()
                 if storage_id is not None:
                     query += " AND id > %(cursor_id)s"
-                    params["cursor_id"] = str(storage_id)
+                    params["cursor_id"] = storage_id
             except (AttributeError, ValueError):
                 # If cursor doesn't have storage_id or is invalid, ignore it
                 pass
