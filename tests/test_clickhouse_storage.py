@@ -13,7 +13,11 @@ from dagster_clickhouse.event_log.event_log import ClickHouseEventLogStorage
 
 
 def create_test_event(
-    run_id: str, message: str, event_type: DagsterEventType, step_key: str = None
+    run_id: str,
+    message: str,
+    event_type: DagsterEventType,
+    step_key: str = None,
+    timestamp=None,
 ) -> EventLogEntry:
     """Helper function to create test EventLogEntry objects."""
     dagster_event = DagsterEvent(
@@ -27,7 +31,7 @@ def create_test_event(
         level="INFO",
         user_message=message,
         run_id=run_id,
-        timestamp=datetime.now().timestamp(),
+        timestamp=timestamp if timestamp is not None else datetime.now().timestamp(),
         step_key=step_key,
         job_name="test_job",
         dagster_event=dagster_event,
@@ -235,6 +239,55 @@ def test_wipe_storage(clickhouse_storage):
     assert len(records.records) == 0
 
 
+def test_none_timestamp_handling(clickhouse_storage):
+    """Test that None timestamp values are handled gracefully during flush operations."""
+    # Create a normal event first
+    normal_event = create_test_event(
+        "none_timestamp_test_run",
+        "Normal event",
+        DagsterEventType.RUN_START,
+    )
+
+    # Store the normal event first
+    clickhouse_storage.store_event(normal_event)
+
+    # Now simulate the problematic scenario by directly manipulating the event's timestamp
+    # after it's created but before it's processed
+    problematic_event = create_test_event(
+        "none_timestamp_test_run_2",  # Different run to avoid deserialization issues
+        "Event that will have None timestamp",
+        DagsterEventType.RUN_SUCCESS,
+    )
+
+    # Simulate the condition that causes the error by setting timestamp to None
+    # This simulates what might happen during event processing
+    problematic_event = problematic_event._replace(timestamp=None)
+
+    # Test that our timestamp validation handles this gracefully
+    # We'll directly test the _flush_events method with a manipulated buffer
+    with clickhouse_storage._buffer_lock:
+        # Add the problematic event to the buffer
+        clickhouse_storage._event_buffer.append(problematic_event)
+        # This should not raise an exception due to our timestamp validation
+        # The original error was: 'NoneType' object has no attribute 'timestamp'
+        # Our fix should convert None timestamps to valid datetime objects
+        try:
+            clickhouse_storage._flush_events()
+            flush_success = True
+        except Exception as e:
+            flush_success = False
+            print(f"Flush failed with error: {e}")
+
+    # Verify that the flush operation succeeded
+    assert flush_success, "Flush operation should succeed with None timestamp handling"
+
+    # Verify the normal event was stored successfully (we can read this one)
+    records = clickhouse_storage.get_records_for_run("none_timestamp_test_run")
+    assert len(records.records) == 1
+
+    print("✓ None timestamp handling test passed")
+
+
 def test_event_watching(clickhouse_storage):
     """Test real-time event watching functionality."""
     received_events = []
@@ -391,6 +444,9 @@ if __name__ == "__main__":
 
     test_wipe_storage(storage)
     print("✓ Wipe storage test passed")
+
+    test_none_timestamp_handling(storage)
+    print("✓ None timestamp handling test passed")
 
     print("\nTesting event watching functionality...")
     test_event_watching(storage)
