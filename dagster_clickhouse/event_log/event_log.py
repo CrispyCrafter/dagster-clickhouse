@@ -561,9 +561,9 @@ class ClickHouseEventLogStorage(EventLogStorage, ConfigurableClass):
                 storage_id = self._get_next_storage_id()
 
                 # Fast timestamp conversion with validation
-                if isinstance(event.timestamp, int | float):
+                if isinstance(event.timestamp, (int, float)):  # noqa: UP038
                     timestamp = datetime.fromtimestamp(event.timestamp)
-                elif isinstance(event.timestamp, datetime):
+                elif isinstance(event.timestamp, datetime):  # type: ignore[unreachable]
                     timestamp = event.timestamp
                 elif event.timestamp is None:
                     # Handle None timestamp by using current time
@@ -695,7 +695,7 @@ class ClickHouseEventLogStorage(EventLogStorage, ConfigurableClass):
             asset_key = event.dagster_event.asset_key.to_string()
 
             # Fast timestamp conversion with validation
-            if isinstance(event.timestamp, int | float):
+            if isinstance(event.timestamp, (int, float)):  # noqa: UP038
                 timestamp = datetime.fromtimestamp(event.timestamp)
             elif isinstance(event.timestamp, datetime):
                 timestamp = event.timestamp
@@ -783,7 +783,7 @@ class ClickHouseEventLogStorage(EventLogStorage, ConfigurableClass):
                 storage_id = cursor_obj.storage_id()
                 if storage_id is not None:
                     query += " AND id > %(cursor_id)s"
-                    params["cursor_id"] = storage_id
+                    params["cursor_id"] = str(storage_id)
             except (AttributeError, ValueError):
                 # If cursor doesn't have storage_id or is invalid, ignore it
                 pass
